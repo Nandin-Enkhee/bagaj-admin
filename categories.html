@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>Хайрцаг — Багаж Удирдлага</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .tab-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .tab-btn {
+    padding: 10px 18px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <div class="main">
+    <div class="page-header">
+      <div>
+        <h1>Хайрцаг / Ангилал</h1>
+        <div class="sub">Багажийг ангилах хайрцгууд болон ангилалууд</div>
+      </div>
+      <button class="btn btn-primary" id="addBtn" onclick="openAddModal()">+ Шинэ хайрцаг</button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabCategories" onclick="switchTab('categories')">📦 Хайрцаг</button>
+      <button class="tab-btn" id="tabTypes" onclick="switchTab('types')">🏷️ Ангилал</button>
+    </div>
+
+    <div class="panel">
+      <table>
+        <thead>
+          <tr id="tableHeadRow">
+            <th>Нэр</th>
+            <th>Тайлбар</th>
+            <th>Багажийн тоо</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="catTbody">
+          <tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:30px;">Уншиж байна...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="modalOverlay" style="display:none;">
+  <div class="modal" style="position:relative;">
+    <span class="close-x" onclick="closeModal()">✕</span>
+    <h2 id="modalTitle">Шинэ хайрцаг</h2>
+    <form id="catForm">
+      <label for="catName" id="nameLabel">Нэр</label>
+      <input type="text" id="catName" required placeholder="Жишээ: Цахилгаан хэрэгсэл">
+
+      <label for="catDesc" id="descLabel">Тайлбар (заавал биш)</label>
+      <textarea id="catDesc" rows="2" placeholder="Энэ хайрцагт ямар багаж хадгалагдах талаар"></textarea>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Болих</button>
+        <button type="submit" class="btn btn-primary" id="saveBtn">Хадгалах</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="common.js"></script>
+<script>
+  document.querySelector(".app").insertAdjacentHTML("afterbegin", renderSidebar("categories"));
+
+  // currentTab: "categories" (Хайрцаг) | "types" (Ангилал)
+  let currentTab = "categories";
+  let editingId = null;
+  let categoriesCache = [];
+  let typesCache = [];
+
+  requireAuth(() => {
+    loadCategories();
+  });
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById("tabCategories").classList.toggle("active", tab === "categories");
+    document.getElementById("tabTypes").classList.toggle("active", tab === "types");
+    document.getElementById("addBtn").textContent = tab === "categories" ? "+ Шинэ хайрцаг" : "+ Шинэ ангилал";
+
+    if (tab === "categories") {
+      loadCategories();
+    } else {
+      loadTypes();
+    }
+  }
+
+  /* ---------- Хайрцаг (categories) ---------- */
+  async function loadCategories() {
+    const tbody = document.getElementById("catTbody");
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:30px;">Уншиж байна...</td></tr>`;
+    try {
+      const [catSnap, toolsSnap] = await Promise.all([
+        db.collection("categories").orderBy("name").get(),
+        db.collection("tools").get()
+      ]);
+
+      const countByCategory = {};
+      toolsSnap.forEach(doc => {
+        const t = doc.data();
+        countByCategory[t.categoryId] = (countByCategory[t.categoryId] || 0) + 1;
+      });
+
+      categoriesCache = [];
+      catSnap.forEach(doc => categoriesCache.push({ id: doc.id, ...doc.data() }));
+
+      if (categoriesCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:30px;">Хайрцаг алга байна. Эхний хайрцгаа нэмээрэй.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = "";
+      categoriesCache.forEach(cat => {
+        const count = countByCategory[cat.id] || 0;
+        tbody.insertAdjacentHTML("beforeend", `
+          <tr>
+            <td><strong>${escapeHtml(cat.name)}</strong></td>
+            <td style="color:var(--text-dim);">${escapeHtml(cat.description || "—")}</td>
+            <td>${count} ширхэг</td>
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openEditModal('${cat.id}')">Засах</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteCategory('${cat.id}', ${count})">Устгах</button>
+            </td>
+          </tr>
+        `);
+      });
+    } catch (err) {
+      console.error(err);
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:30px;">Алдаа: ${err.message}</td></tr>`;
+    }
+  }
+
+  /* ---------- Ангилал (types) ---------- */
+  async function loadTypes() {
+    const tbody = document.getElementById("catTbody");
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:30px;">Уншиж байна...</td></tr>`;
+    try {
+      const [typeSnap, toolsSnap] = await Promise.all([
+        db.collection("types").orderBy("name").get(),
+        db.collection("tools").get()
+      ]);
+
+      const countByType = {};
+      toolsSnap.forEach(doc => {
+        const t = doc.data();
+        if (t.typeId) {
+          countByType[t.typeId] = (countByType[t.typeId] || 0) + 1;
+        }
+      });
+
+      typesCache = [];
+      typeSnap.forEach(doc => typesCache.push({ id: doc.id, ...doc.data() }));
+
+      if (typesCache.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-dim); padding:30px;">Ангилал алга байна. Эхний ангилалаа нэмээрэй.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = "";
+      typesCache.forEach(type => {
+        const count = countByType[type.id] || 0;
+        tbody.insertAdjacentHTML("beforeend", `
+          <tr>
+            <td><strong>${escapeHtml(type.name)}</strong></td>
+            <td style="color:var(--text-dim);">—</td>
+            <td>${count} ширхэг</td>
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openEditModal('${type.id}')">Засах</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteType('${type.id}', ${count})">Устгах</button>
+            </td>
+          </tr>
+        `);
+      });
+    } catch (err) {
+      console.error(err);
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:30px;">Алдаа: ${err.message}</td></tr>`;
+    }
+  }
+
+  /* ---------- Modal (Хайрцаг/Ангилал хоёрт хамт ашиглагдана) ---------- */
+  function openAddModal() {
+    editingId = null;
+    const isType = currentTab === "types";
+    document.getElementById("modalTitle").textContent = isType ? "Шинэ ангилал" : "Шинэ хайрцаг";
+    document.getElementById("nameLabel").textContent = "Нэр";
+    document.getElementById("catName").placeholder = isType ? "Жишээ: Цахилгаан хэрэгсэл" : "Жишээ: Хайрцаг 1";
+    document.getElementById("descLabel").style.display = isType ? "none" : "block";
+    document.getElementById("catDesc").style.display = isType ? "none" : "block";
+    document.getElementById("catForm").reset();
+    document.getElementById("modalOverlay").style.display = "flex";
+  }
+
+  function openEditModal(id) {
+    const isType = currentTab === "types";
+    const item = isType
+      ? typesCache.find(t => t.id === id)
+      : categoriesCache.find(c => c.id === id);
+    if (!item) return;
+    editingId = id;
+    document.getElementById("modalTitle").textContent = isType ? "Ангилал засах" : "Хайрцаг засах";
+    document.getElementById("descLabel").style.display = isType ? "none" : "block";
+    document.getElementById("catDesc").style.display = isType ? "none" : "block";
+    document.getElementById("catName").value = item.name || "";
+    document.getElementById("catDesc").value = item.description || "";
+    document.getElementById("modalOverlay").style.display = "flex";
+  }
+
+  function closeModal() {
+    document.getElementById("modalOverlay").style.display = "none";
+  }
+
+  document.getElementById("catForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const saveBtn = document.getElementById("saveBtn");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Хадгалж байна...";
+
+    const name = document.getElementById("catName").value.trim();
+    const description = document.getElementById("catDesc").value.trim();
+    const isType = currentTab === "types";
+    const collectionName = isType ? "types" : "categories";
+
+    try {
+      if (editingId) {
+        const data = isType ? { name } : { name, description };
+        await db.collection(collectionName).doc(editingId).update(data);
+        showToast(isType ? "Ангилал шинэчлэгдлээ" : "Хайрцаг шинэчлэгдлээ");
+      } else {
+        const data = isType
+          ? { name, createdAt: firebase.firestore.FieldValue.serverTimestamp() }
+          : { name, description, createdAt: firebase.firestore.FieldValue.serverTimestamp() };
+        await db.collection(collectionName).add(data);
+        showToast(isType ? "Шинэ ангилал нэмэгдлээ" : "Шинэ хайрцаг нэмэгдлээ");
+      }
+      closeModal();
+      if (isType) loadTypes(); else loadCategories();
+    } catch (err) {
+      console.error(err);
+      showToast("Алдаа гарлаа: " + err.message, "error");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Хадгалах";
+    }
+  });
+
+  async function deleteCategory(id, toolCount) {
+    if (toolCount > 0) {
+      showToast(`Энэ хайрцагт ${toolCount} багаж байна. Эхлээд тэдгээрийг хөдөлгөж/устгаарай.`, "error");
+      return;
+    }
+    if (!confirm("Энэ хайрцгийг устгахдаа итгэлтэй байна уу?")) return;
+    try {
+      await db.collection("categories").doc(id).delete();
+      showToast("Хайрцаг устгагдлаа");
+      loadCategories();
+    } catch (err) {
+      showToast("Устгахад алдаа гарлаа: " + err.message, "error");
+    }
+  }
+
+  async function deleteType(id, toolCount) {
+    if (toolCount > 0) {
+      showToast(`Энэ ангилалд ${toolCount} багаж байна. Эхлээд тэдгээрийг хөдөлгөж/устгаарай.`, "error");
+      return;
+    }
+    if (!confirm("Энэ ангилалыг устгахдаа итгэлтэй байна уу?")) return;
+    try {
+      await db.collection("types").doc(id).delete();
+      showToast("Ангилал устгагдлаа");
+      loadTypes();
+    } catch (err) {
+      showToast("Устгахад алдаа гарлаа: " + err.message, "error");
+    }
+  }
+</script>
+
+</body>
+</html>

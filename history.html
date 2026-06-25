@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>Түүх — Багаж Удирдлага</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app" id="app">
+  <div class="main">
+    <div class="page-header">
+      <div>
+        <h1>Зээлийн түүх</h1>
+        <div class="sub">Хэн ямар багаж авсан, буцаасан эсэхийг харах</div>
+      </div>
+    </div>
+
+    <div class="filters-bar">
+      <input type="date" id="filterDate">
+      <select id="filterStatus">
+        <option value="">Бүх төлөв</option>
+        <option value="borrow">Зөвхөн авсан</option>
+        <option value="return">Зөвхөн буцаасан</option>
+      </select>
+      <input type="text" class="search-box" id="searchInput" placeholder="🔍 Хэрэглэгч эсвэл багажаар хайх...">
+      <button class="btn btn-secondary btn-sm" onclick="clearFilters()">Цэвэрлэх</button>
+    </div>
+
+    <div id="historyContent">
+      <p style="text-align:center; color:var(--text-dim); padding:30px;">Уншиж байна...</p>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="common.js"></script>
+<script>
+  document.querySelector(".app").insertAdjacentHTML("afterbegin", renderSidebar("history"));
+
+  let transactionsCache = [];
+
+  requireAuth(() => {
+    loadHistory();
+  });
+
+  async function loadHistory() {
+    const content = document.getElementById("historyContent");
+    try {
+      const snap = await db.collection("transactions")
+        .orderBy("timestamp", "desc")
+        .limit(500)
+        .get();
+
+      transactionsCache = [];
+      snap.forEach(doc => transactionsCache.push({ id: doc.id, ...doc.data() }));
+
+      renderGrid();
+    } catch (err) {
+      console.error(err);
+      content.innerHTML = `<p style="text-align:center; color:var(--danger); padding:30px;">Алдаа: ${err.message}</p>`;
+    }
+  }
+
+  function renderGrid() {
+    const content = document.getElementById("historyContent");
+    const dateFilter = document.getElementById("filterDate").value; // "2026-06-24" format
+    const statusFilter = document.getElementById("filterStatus").value;
+    const search = document.getElementById("searchInput").value.trim().toLowerCase();
+
+    let filtered = transactionsCache.filter(tx => {
+      const matchesDate = !dateFilter || dateOnlyString(tx.timestamp) === dateFilter;
+      const matchesStatus = !statusFilter || tx.type === statusFilter;
+      const haystack = `${tx.toolName || ""} ${tx.userName || ""} ${tx.userId || ""}`.toLowerCase();
+      const matchesSearch = !search || haystack.includes(search);
+      return matchesDate && matchesStatus && matchesSearch;
+    });
+
+    if (filtered.length === 0) {
+      content.innerHTML = `<p style="text-align:center; color:var(--text-dim); padding:30px;">Тохирох бичлэг олдсонгүй</p>`;
+      return;
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "history-grid";
+
+    filtered.forEach(tx => {
+      const statusClass = tx.type === "borrow" ? "borrowed" : "returned";
+      const statusLabel = tx.type === "borrow" ? "Авсан" : "Буцаасан";
+
+      const catalogImg = tx.catalogImageUrl
+        ? `<img src="${tx.catalogImageUrl}" alt="Багаж" style="cursor:zoom-in;" onclick="openImageViewer('${tx.catalogImageUrl}')">`
+        : `<div class="no-img">🛠️</div>`;
+
+      const pickupImg = tx.pickupPhotoUrl
+        ? `<img src="${tx.pickupPhotoUrl}" alt="Авсан" style="cursor:zoom-in;" onclick="openImageViewer('${tx.pickupPhotoUrl}')">`
+        : `<div class="no-img">—</div>`;
+
+      const returnImg = tx.returnPhotoUrl
+        ? `<img src="${tx.returnPhotoUrl}" alt="Өгсөн" style="cursor:zoom-in;" onclick="openImageViewer('${tx.returnPhotoUrl}')">`
+        : `<div class="no-img">—</div>`;
+
+      grid.insertAdjacentHTML("beforeend", `
+        <div class="history-card">
+          <div class="history-images">
+            <div class="img-third">
+              ${catalogImg}
+              <div class="img-label">Багаж</div>
+            </div>
+            <div class="img-third">
+              ${pickupImg}
+              <div class="img-label">Авсан</div>
+            </div>
+            <div class="img-third">
+              ${returnImg}
+              <div class="img-label">Өгсөн</div>
+            </div>
+          </div>
+          <div class="body">
+            <div class="tool-name">${escapeHtml(tx.toolName || "—")}</div>
+            <div class="meta-row">
+              Авсан: ${formatDate(tx.timestamp)}<br>
+              ${tx.returnTimestamp ? `Өгсөн: ${formatDate(tx.returnTimestamp)}<br>` : ""}
+            </div>
+            <span class="status-pill ${statusClass}">${statusLabel}</span>
+          </div>
+        </div>
+      `);
+    });
+
+    content.innerHTML = "";
+    content.appendChild(grid);
+  }
+
+  function clearFilters() {
+    document.getElementById("filterDate").value = "";
+    document.getElementById("filterStatus").value = "";
+    document.getElementById("searchInput").value = "";
+    renderGrid();
+  }
+
+  document.getElementById("filterDate").addEventListener("change", renderGrid);
+  document.getElementById("filterStatus").addEventListener("change", renderGrid);
+  document.getElementById("searchInput").addEventListener("input", renderGrid);
+</script>
+
+</body>
+</html>

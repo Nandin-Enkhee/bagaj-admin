@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>Нүүр — Багаж Удирдлага</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- sidebar JS-ээр render хийгдэнэ -->
+  <div class="main">
+    <div class="page-header">
+      <div>
+        <h1>Нүүр хуудас</h1>
+        <div class="sub">Системийн товч мэдээлэл</div>
+      </div>
+    </div>
+
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card">
+        <div class="label">Нийт багаж</div>
+        <div class="value" id="statTotalTools">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Нийт хайрцаг</div>
+        <div class="value" id="statTotalCategories">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Одоо зээлсэн</div>
+        <div class="value" id="statBorrowed">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Дуусч буй (≤2)</div>
+        <div class="value" id="statLow">—</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0; font-size:16px;">Сүүлийн үйл явдлууд</h2>
+      <table id="recentTable">
+        <thead>
+          <tr>
+            <th>Зураг</th>
+            <th>Огноо</th>
+            <th>Багаж</th>
+            <th>Хэрэглэгч</th>
+            <th>Төлөв</th>
+          </tr>
+        </thead>
+        <tbody id="recentTbody">
+          <tr><td colspan="5" style="text-align:center; color:var(--text-dim); padding:30px;">Уншиж байна...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="common.js"></script>
+<script>
+  document.querySelector(".app").insertAdjacentHTML("afterbegin", renderSidebar("dashboard"));
+
+  requireAuth(async (user) => {
+    loadStats();
+    loadRecent();
+  });
+
+  async function loadStats() {
+    try {
+      const toolsSnap = await db.collection("tools").get();
+      const catsSnap = await db.collection("categories").get();
+
+      let totalTools = toolsSnap.size;
+      let lowCount = 0;
+      let borrowedTotal = 0;
+
+      toolsSnap.forEach(doc => {
+        const t = doc.data();
+        const available = t.availableQty ?? 0;
+        const total = t.totalQty ?? 0;
+        if (available <= 2) lowCount++;
+        borrowedTotal += (total - available);
+      });
+
+      document.getElementById("statTotalTools").textContent = totalTools;
+      document.getElementById("statTotalCategories").textContent = catsSnap.size;
+      document.getElementById("statBorrowed").textContent = borrowedTotal;
+      document.getElementById("statLow").textContent = lowCount;
+    } catch (err) {
+      console.error(err);
+      showToast("Статистик ачаалахад алдаа гарлаа", "error");
+    }
+  }
+
+  async function loadRecent() {
+    const tbody = document.getElementById("recentTbody");
+    try {
+      const snap = await db.collection("transactions")
+        .orderBy("timestamp", "desc")
+        .limit(10)
+        .get();
+
+      if (snap.empty) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-dim); padding:30px;">Одоогоор бичлэг алга</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = "";
+      snap.forEach(doc => {
+        const tx = doc.data();
+        const statusClass = tx.type === "borrow" ? "borrowed" : "returned";
+        const statusLabel = tx.type === "borrow" ? "Авсан" : "Буцаасан";
+
+        const miniImgStyle = "width:32px; height:32px; border-radius:6px; object-fit:cover; cursor:zoom-in; border:1px solid var(--panel-border);";
+        const catalogThumb = tx.catalogImageUrl
+          ? `<img src="${tx.catalogImageUrl}" style="${miniImgStyle}" onclick="openImageViewer('${tx.catalogImageUrl}')">`
+          : `<span style="opacity:0.3;">🛠️</span>`;
+        const pickupThumb = tx.pickupPhotoUrl
+          ? `<img src="${tx.pickupPhotoUrl}" style="${miniImgStyle}" onclick="openImageViewer('${tx.pickupPhotoUrl}')">`
+          : `<span style="opacity:0.3;">—</span>`;
+        const returnThumb = tx.returnPhotoUrl
+          ? `<img src="${tx.returnPhotoUrl}" style="${miniImgStyle}" onclick="openImageViewer('${tx.returnPhotoUrl}')">`
+          : `<span style="opacity:0.3;">—</span>`;
+
+        tbody.insertAdjacentHTML("beforeend", `
+          <tr>
+            <td><div style="display:flex; gap:4px;">${catalogThumb}${pickupThumb}${returnThumb}</div></td>
+            <td>${formatDate(tx.timestamp)}</td>
+            <td>${escapeHtml(tx.toolName || "—")}</td>
+            <td>${escapeHtml(tx.userName || tx.userId || "—")}</td>
+            <td><span class="status-pill ${statusClass}">${statusLabel}</span></td>
+          </tr>
+        `);
+      });
+    } catch (err) {
+      console.error(err);
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding:30px;">Алдаа гарлаа: ${err.message}</td></tr>`;
+    }
+  }
+</script>
+
+</body>
+</html>
