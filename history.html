@@ -12,7 +12,7 @@
   <div class="main">
     <div class="page-header">
       <div>
-        <h1>Зээлийн түүх</h1>
+        <h1>Түүх</h1>
         <div class="sub">Хэн ямар багаж авсан, буцаасан эсэхийг харах</div>
       </div>
     </div>
@@ -105,6 +105,12 @@
         ? `<img src="${tx.returnPhotoUrl}" alt="Өгсөн" style="cursor:zoom-in;" onclick="openImageViewer('${tx.returnPhotoUrl}')">`
         : `<div class="no-img">—</div>`;
 
+      const unreturnablePill = tx.unreturnable
+        ? `<span class="status-pill" style="background:var(--danger-dim); color:var(--danger);">Буцаах боломжгүй</span>`
+        : "";
+
+      const unreturnableBtnLabel = tx.unreturnable ? "Буцаах боломжтой болгох" : "Буцаах боломжгүй гэж тэмдэглэх";
+
       grid.insertAdjacentHTML("beforeend", `
         <div class="history-card">
           <div class="history-images">
@@ -127,7 +133,14 @@
               Авсан: ${formatDate(tx.timestamp)}<br>
               ${tx.returnTimestamp ? `Өгсөн: ${formatDate(tx.returnTimestamp)}<br>` : ""}
             </div>
-            <span class="status-pill ${statusClass}">${statusLabel}</span>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+              <span class="status-pill ${statusClass}">${statusLabel}</span>
+              ${unreturnablePill}
+            </div>
+            <div style="display:flex; gap:6px; margin-top:10px;">
+              <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="toggleUnreturnable('${tx.id}', ${!tx.unreturnable})">${unreturnableBtnLabel}</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteTransaction('${tx.id}')">Устгах</button>
+            </div>
           </div>
         </div>
       `);
@@ -147,6 +160,41 @@
   document.getElementById("filterDate").addEventListener("change", renderGrid);
   document.getElementById("filterStatus").addEventListener("change", renderGrid);
   document.getElementById("searchInput").addEventListener("input", renderGrid);
+
+  const DELETE_CODE = "99063452";
+
+  async function deleteTransaction(txId) {
+    const code = prompt("Устгахын тулд нууц кодоо оруулна уу:");
+    if (code === null) return; // болих
+    if (code !== DELETE_CODE) {
+      showToast("Код буруу байна. Устгагдсангүй.", "error");
+      return;
+    }
+    if (!confirm("Энэ бичлэгийг бүрмөсөн устгахдаа итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй.")) return;
+
+    try {
+      await db.collection("transactions").doc(txId).delete();
+      showToast("Бичлэг устгагдлаа");
+      transactionsCache = transactionsCache.filter(tx => tx.id !== txId);
+      renderGrid();
+    } catch (err) {
+      console.error(err);
+      showToast("Устгахад алдаа гарлаа: " + err.message, "error");
+    }
+  }
+
+  async function toggleUnreturnable(txId, newValue) {
+    try {
+      await db.collection("transactions").doc(txId).update({ unreturnable: newValue });
+      const tx = transactionsCache.find(t => t.id === txId);
+      if (tx) tx.unreturnable = newValue;
+      showToast(newValue ? "Буцаах боломжгүй гэж тэмдэглэгдлээ" : "Буцаах боломжтой болгогдлоо");
+      renderGrid();
+    } catch (err) {
+      console.error(err);
+      showToast("Алдаа гарлаа: " + err.message, "error");
+    }
+  }
 </script>
 
 </body>
