@@ -344,7 +344,15 @@
     }
   });
 
+  const DELETE_CODE = "1515";
+
   async function deleteTool(id) {
+    const code = prompt("Устгахын тулд нууц кодоо оруулна уу:");
+    if (code === null) return; // болих
+    if (code !== DELETE_CODE) {
+      showToast("Код буруу байна. Устгагдсангүй.", "error");
+      return;
+    }
     if (!confirm("Энэ багажийг устгахдаа итгэлтэй байна уу?")) return;
     try {
       await db.collection("tools").doc(id).delete();
