@@ -86,68 +86,121 @@
       return;
     }
 
+    // Нэг зэрэг авагдсан/буцаагдсан бичлэгүүдийг (borrowBatchId эсвэл
+    // returnBatchId-аар) нэг бүлэг болгож нэгтгэнэ. batchId байхгүй
+    // bichлэгүүд тус тусдаа (өөрийн ганцаарчилсан бүлэгт) үлдэнэ.
+    const groups = [];
+    const seenIds = new Set();
+
+    filtered.forEach(tx => {
+      if (seenIds.has(tx.id)) return;
+
+      const batchKey = tx.type === "borrow" ? tx.borrowBatchId : tx.returnBatchId;
+      let groupTxs;
+
+      if (batchKey) {
+        groupTxs = filtered.filter(t => {
+          const key = t.type === "borrow" ? t.borrowBatchId : t.returnBatchId;
+          return key === batchKey && t.type === tx.type;
+        });
+      } else {
+        groupTxs = [tx];
+      }
+
+      groupTxs.forEach(t => seenIds.add(t.id));
+      groups.push(groupTxs);
+    });
+
     const grid = document.createElement("div");
     grid.className = "history-grid";
 
-    filtered.forEach(tx => {
-      const statusClass = tx.type === "borrow" ? "borrowed" : "returned";
-      const statusLabel = tx.type === "borrow" ? "Авсан" : "Буцаасан";
-
-      const catalogImg = tx.catalogImageUrl
-        ? `<img src="${tx.catalogImageUrl}" alt="Багаж" style="cursor:zoom-in;" onclick="openImageViewer('${tx.catalogImageUrl}')">`
-        : `<div class="no-img">🛠️</div>`;
-
-      const pickupImg = tx.pickupPhotoUrl
-        ? `<img src="${tx.pickupPhotoUrl}" alt="Авсан" style="cursor:zoom-in;" onclick="openImageViewer('${tx.pickupPhotoUrl}')">`
-        : `<div class="no-img">—</div>`;
-
-      const returnImg = tx.returnPhotoUrl
-        ? `<img src="${tx.returnPhotoUrl}" alt="Өгсөн" style="cursor:zoom-in;" onclick="openImageViewer('${tx.returnPhotoUrl}')">`
-        : `<div class="no-img">—</div>`;
-
-      const unreturnablePill = tx.unreturnable
-        ? `<span class="status-pill" style="background:var(--danger-dim); color:var(--danger);">Буцаах боломжгүй</span>`
-        : "";
-
-      const unreturnableBtnLabel = tx.unreturnable ? "Буцаах боломжтой болгох" : "Буцаах боломжгүй гэж тэмдэглэх";
-
-      grid.insertAdjacentHTML("beforeend", `
-        <div class="history-card">
-          <div class="history-images">
-            <div class="img-third">
-              ${catalogImg}
-              <div class="img-label">Багаж</div>
-            </div>
-            <div class="img-third">
-              ${pickupImg}
-              <div class="img-label">Авсан</div>
-            </div>
-            <div class="img-third">
-              ${returnImg}
-              <div class="img-label">Өгсөн</div>
-            </div>
-          </div>
-          <div class="body">
-            <div class="tool-name">${escapeHtml(tx.toolName || "—")}</div>
-            <div class="meta-row">
-              Авсан: ${formatDate(tx.timestamp)}<br>
-              ${tx.returnTimestamp ? `Өгсөн: ${formatDate(tx.returnTimestamp)}<br>` : ""}
-            </div>
-            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-              <span class="status-pill ${statusClass}">${statusLabel}</span>
-              ${unreturnablePill}
-            </div>
-            <div style="display:flex; gap:6px; margin-top:10px;">
-              <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="toggleUnreturnable('${tx.id}', ${!tx.unreturnable})">${unreturnableBtnLabel}</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteTransaction('${tx.id}')">Устгах</button>
-            </div>
-          </div>
-        </div>
-      `);
+    groups.forEach(groupTxs => {
+      grid.insertAdjacentHTML("beforeend", renderGroupCard(groupTxs));
     });
 
     content.innerHTML = "";
     content.appendChild(grid);
+  }
+
+  function renderGroupCard(groupTxs) {
+    // Бүлэг доторх бичлэгүүд ихэвчлэн ижил pickupPhotoUrl/returnPhotoUrl
+    // (нэг зэрэг авсан зураг) хуваалцдаг тул эхний бичлэгээс зургуудыг авна
+    const first = groupTxs[0];
+    const statusClass = first.type === "borrow" ? "borrowed" : "returned";
+    const statusLabel = first.type === "borrow" ? "Авсан" : "Буцаасан";
+
+    const pickupImg = first.pickupPhotoUrl
+      ? `<img src="${first.pickupPhotoUrl}" alt="Авсан" style="cursor:zoom-in;" onclick="openImageViewer('${first.pickupPhotoUrl}')">`
+      : `<div class="no-img">—</div>`;
+
+    const returnImg = first.returnPhotoUrl
+      ? `<img src="${first.returnPhotoUrl}" alt="Өгсөн" style="cursor:zoom-in;" onclick="openImageViewer('${first.returnPhotoUrl}')">`
+      : `<div class="no-img">—</div>`;
+
+    // Хэрвээ нэг зэрэг олон багаж бол, тус бүрийн catalog зургийг жижгээр
+    // нэг "Багаж" слот дотор давхар харуулна (max 3 зураг)
+    let catalogSlot;
+    if (groupTxs.length === 1) {
+      catalogSlot = first.catalogImageUrl
+        ? `<img src="${first.catalogImageUrl}" alt="Багаж" style="cursor:zoom-in;" onclick="openImageViewer('${first.catalogImageUrl}')">`
+        : `<div class="no-img">🛠️</div>`;
+    } else {
+      const thumbs = groupTxs.slice(0, 3).map(t => {
+        if (!t.catalogImageUrl) return `<div style="width:32%; height:100%; display:flex; align-items:center; justify-content:center; opacity:.3;">🛠️</div>`;
+        return `<img src="${t.catalogImageUrl}" style="width:32%; height:100%; object-fit:cover; cursor:zoom-in;" onclick="openImageViewer('${t.catalogImageUrl}')">`;
+      }).join("");
+      catalogSlot = `<div style="display:flex; gap:2px; width:100%; height:100%;">${thumbs}</div>`;
+    }
+
+    const unreturnablePill = first.unreturnable
+      ? `<span class="status-pill" style="background:var(--danger-dim); color:var(--danger);">Буцаах боломжгүй</span>`
+      : "";
+
+    // Олон бичлэгтэй бол нэрсийг жагсаалт болгож, нэг хэрэгслийн нэрийн
+    // оронд бүгдийг харуулна
+    const namesHtml = groupTxs.length === 1
+      ? escapeHtml(first.toolName || "—")
+      : groupTxs.map(t => escapeHtml(t.toolName || "—")).join(", ");
+
+    // Бүлгийн бүх id-г action товчинд дамжуулна (JSON-stringify хийж
+    // attribute дотор хадгална)
+    const idsJson = JSON.stringify(groupTxs.map(t => t.id)).replace(/"/g, "&quot;");
+    const allUnreturnable = groupTxs.every(t => t.unreturnable);
+    const unreturnableBtnLabel = allUnreturnable ? "Буцаах боломжтой болгох" : "Буцаах боломжгүй гэж тэмдэглэх";
+
+    return `
+      <div class="history-card">
+        <div class="history-images">
+          <div class="img-third">
+            ${catalogSlot}
+            <div class="img-label">Багаж${groupTxs.length > 1 ? ` (${groupTxs.length})` : ""}</div>
+          </div>
+          <div class="img-third">
+            ${pickupImg}
+            <div class="img-label">Авсан</div>
+          </div>
+          <div class="img-third">
+            ${returnImg}
+            <div class="img-label">Өгсөн</div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="tool-name">${namesHtml}</div>
+          <div class="meta-row">
+            Авсан: ${formatDate(first.timestamp)}<br>
+            ${first.returnTimestamp ? `Өгсөн: ${formatDate(first.returnTimestamp)}<br>` : ""}
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+            <span class="status-pill ${statusClass}">${statusLabel}</span>
+            ${unreturnablePill}
+          </div>
+          <div style="display:flex; gap:6px; margin-top:10px;">
+            <button class="btn btn-secondary btn-sm" style="flex:1;" onclick='toggleUnreturnableBatch(${idsJson}, ${!allUnreturnable})'>${unreturnableBtnLabel}</button>
+            <button class="btn btn-danger btn-sm" onclick='deleteTransactionBatch(${idsJson})'>Устгах</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function clearFilters() {
@@ -163,19 +216,22 @@
 
   const DELETE_CODE = "99063452";
 
-  async function deleteTransaction(txId) {
+  async function deleteTransactionBatch(txIds) {
     const code = prompt("Устгахын тулд нууц кодоо оруулна уу:");
     if (code === null) return; // болих
     if (code !== DELETE_CODE) {
       showToast("Код буруу байна. Устгагдсангүй.", "error");
       return;
     }
-    if (!confirm("Энэ бичлэгийг бүрмөсөн устгахдаа итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй.")) return;
+    const confirmMsg = txIds.length > 1
+      ? `Энэ ${txIds.length} бичлэгийг бүрмөсөн устгахдаа итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй.`
+      : "Энэ бичлэгийг бүрмөсөн устгахдаа итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй.";
+    if (!confirm(confirmMsg)) return;
 
     try {
-      await db.collection("transactions").doc(txId).delete();
+      await Promise.all(txIds.map(id => db.collection("transactions").doc(id).delete()));
       showToast("Бичлэг устгагдлаа");
-      transactionsCache = transactionsCache.filter(tx => tx.id !== txId);
+      transactionsCache = transactionsCache.filter(tx => !txIds.includes(tx.id));
       renderGrid();
     } catch (err) {
       console.error(err);
@@ -183,11 +239,13 @@
     }
   }
 
-  async function toggleUnreturnable(txId, newValue) {
+  async function toggleUnreturnableBatch(txIds, newValue) {
     try {
-      await db.collection("transactions").doc(txId).update({ unreturnable: newValue });
-      const tx = transactionsCache.find(t => t.id === txId);
-      if (tx) tx.unreturnable = newValue;
+      await Promise.all(txIds.map(id => db.collection("transactions").doc(id).update({ unreturnable: newValue })));
+      txIds.forEach(id => {
+        const tx = transactionsCache.find(t => t.id === id);
+        if (tx) tx.unreturnable = newValue;
+      });
       showToast(newValue ? "Буцаах боломжгүй гэж тэмдэглэгдлээ" : "Буцаах боломжтой болгогдлоо");
       renderGrid();
     } catch (err) {
